@@ -1,0 +1,206 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sqlalchemy import create_engine
+import statsmodels.api as sm
+import lightgbm as lgb
+
+conn_string = 'postgresql://admin_eqds:xxxxxxxx@eqdspostgres.postgres.database.azure.com/postgres'
+db = create_engine(conn_string)
+conn2 = db.connect()
+
+def makeplot(x,y,invartype,invarname,respvartype,respvarname,plotpath,debugval = False):
+
+    ##  BIN respvartype needs to have y = 1/0 .  
+    ##  plot will be % of 1(s)
+
+    data_df = pd.DataFrame()
+    data_df[invarname] = x
+    data_df[respvarname] = y
+
+    if debugval == True:
+        print('---------- Step 1: group the data ------------------')
+
+    # Calculate deciles of the numeric variable or use variable directly
+    if invartype == 'CHAR':
+        data_df['GROUPED'] = x
+    else:
+        data_df['GROUPED'] = pd.qcut(x.rank(method='first'), q=10, labels=False)
+
+    if debugval == True:
+        print('---------- Step 2: stats by group  ------------------')
+
+    # Calculate percentage of ones for each decile
+    if respvartype == 'BIN':
+        grouped_vals = data_df.groupby('GROUPED')[respvarname].mean() * 100
+    else:
+        grouped_vals = data_df.groupby('GROUPED')[respvarname].mean()
+
+    if debugval == True:
+        print('---------- Step 3: create plots ------------------')
+       
+    # Plot using Seaborn
+    plt.figure(figsize=(10, 6))
+    #sns.barplot()
+
+    sns.barplot(x=grouped_vals.index, y=grouped_vals.values, palette='viridis')
+    plt.xlabel(f'{invarname} Vals')
+    plt.ylabel(f'{respvarname} Avg')
+    plt.title(f'Values of {respvarname} vs. {invarname}')
+    plt.xticks(rotation=45)
+
+    if debugval == True:
+        print('---------- Step 4: output plots ------------------')
+
+    plt.savefig(f'{plotpath}/' + f'Values of {respvarname} vs. {invarname}' + '.png')
+    plt.tight_layout()
+
+    if debugval == True:
+        print('---------- Step 4: plot complete ------------------')
+   
+    plt.close()
+
+
+  
+
+def SAS2PG(pg_conn,sasfilename):
+    tempdf = pd.read_sas(sasfilename,encoding='latin1')
+    print('-----   Reading SAS table into Pandas ----')
+    print('-----   Here are the columns and types ----')
+    print(tempdf.dtypes)
+    print('-----   Here is the SAS table as a DataFrame in Python ----')
+    print(tempdf)
+    
+    return tempdf
+
+
+alldf = SAS2PG(conn2,'Z:\projects\eberle_house_202401\preds_all.sas7bdat')
+
+
+alldf.columns = alldf.columns.str.upper()
+
+
+glm_features = [('RECENCY_LOW','NUM'),
+            ('LOG_AVG_DON_ALL_EVER','NUM'),
+            ('LOG_AVG_DON_ALL_DOL','NUM')]
+
+
+glm_features = [('RECENCY_LOW','NUM'),
+            ('AVG_DON_ALL_EVER','NUM'),
+            ('AVG_DON_ALL_DOL','NUM')]
+
+logistics_features =  [('RECENCY_LOW','NUM'),
+            ('DOLRANGE_LOW','CHAR'),
+            ('EVERCOUNT_LOW','CHAR'),
+            ('LOGIT_DOL_EVER_ALL','NUM')]
+
+####  FIT THE LOGISTIC MODEL
+
+char_varlist = []
+for val in logistics_features:
+    if val[1]=='CHAR':
+        char_varlist.append(val[0])
+
+num_varlist = []
+for val in logistics_features:
+    if val[1]=='NUM':
+        num_varlist.append(val[0])
+
+y = pd.DataFrame()
+
+alldf['NUM_NOT_DONATED_ALL'] = alldf['NUM_MAILED_ALL']-alldf['NUM_DONATED_ALL']
+
+
+y = alldf[['NUM_DONATED_ALL','NUM_NOT_DONATED_ALL']]
+
+
+if char_varlist != []:
+    X = pd.get_dummies(alldf[char_varlist],columns=char_varlist,drop_first=True)
+else:
+    X = pd.DataFrame()   
+
+X[num_varlist] = alldf[num_varlist]
+X2 = sm.add_constant(X)
+
+
+glm_binom = sm.GLM(y.astype(float), X2.astype(float), family=sm.families.Binomial())
+res = glm_binom.fit()
+print(res.summary())
+
+
+
+####  FIT THE GLM MODEL
+
+
+char_varlist = []
+for val in glm_features:
+    if val[1]=='CHAR':
+        char_varlist.append(val[0])
+
+num_varlist = []
+for val in glm_features:
+    if val[1]=='NUM':
+        num_varlist.append(val[0])
+
+y = pd.DataFrame()
+
+y['LOG_AVG_DON_ALL'] = alldf['LOG_AVG_DON_ALL']
+if char_varlist != []:
+    X = pd.get_dummies(alldf[char_varlist],columns=char_varlist)
+else:
+    X = pd.DataFrame()   
+
+wgt = alldf['NUM_DONATED_ALL']
+
+X[num_varlist] = alldf[num_varlist]
+
+X2 = sm.add_constant(X)
+
+print(X2.dtypes)
+
+
+print(y.dtypes)
+
+est = sm.WLS(y.astype(float),X2.astype(float),weights=wgt)
+
+est2 = est.fit()
+
+print(est2.summary())
+
+
+model = lgb.LGBMRegressor(max_depth=5,n_estimators=90,num_leaves=31)
+
+
+out = model.fit(X2.astype(float),y.astype(float),eval_set=[(X2.astype(float),y.astype(float))],eval_metric='logloss',
+                callbacks=[lgb.early_stopping(stopping_rounds=90,min_delta=.01)])
+
+print("get_params =" + str(model.get_params()))
+print("eval_results =" + str(model.evals_result_))
+print("feature_imortances =" + str(model.feature_importances_))
+print("R2 =" + str(model.score(X2,y)))
+print("estimators =" + str(model.n_estimators_))
+print("features =" + str(model.n_features_))
+print("best_iteration_ =" + str(model.best_iteration_))
+print("best_score_ =" + str(model.best_score_))
+print("booster_ =" + str(model.booster_))
+print("feature_name_ =" + str(model.feature_name_))
+print("n_features_in_ =" + str(model.n_features_in_))
+print("n_iter_ =" + str(model.n_iter_))
+print("objective_ =" + str(model.objective_))
+
+##print(model.booster_.dump_model())
+
+import graphviz
+from IPython.display import HTML
+viz = lgb.create_tree_digraph(model.booster_,directory="c:/speights2",filename="dud.png")
+
+viz.render(filename = "c:/speights2/test1.png",format='png')
+
+quit()
+
+HTML(viz._repr_image_svg_xml())
+
+
+
+s = graphviz.Source(viz, filename = "c:/speights2/test1.gv", format = "png")
+s.view()
