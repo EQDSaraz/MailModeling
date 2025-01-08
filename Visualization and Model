@@ -5,7 +5,7 @@ from sqlalchemy import create_engine
 import statsmodels.api as sm
 import lightgbm as lgb
 
-conn_string = 'postgresql://admin_eqds:xxxxxxxx@eqdspostgres.postgres.database.azure.com/postgres'
+conn_string = 'postgresql://admin_xxx:xxxxxxxx@eqdspostgres.postgres.database.azure.com/postgres'
 db = create_engine(conn_string)
 conn2 = db.connect()
 
@@ -74,7 +74,7 @@ def SAS2PG(pg_conn,sasfilename):
     return tempdf
 
 
-alldf = SAS2PG(conn2,'Z:\projects\eberle_house_202401\preds_all.sas7bdat')
+alldf = SAS2PG(conn2,'Z:\projects\house_202401\preds_all.sas7bdat')
 
 
 alldf.columns = alldf.columns.str.upper()
@@ -168,7 +168,7 @@ est2 = est.fit()
 print(est2.summary())
 
 
-model = lgb.LGBMRegressor(max_depth=5,n_estimators=90,num_leaves=31)
+model = lgb.LGBMRegressor(max_depth=5,n_estimators=xx,num_leaves=xx)
 
 
 out = model.fit(X2.astype(float),y.astype(float),eval_set=[(X2.astype(float),y.astype(float))],eval_metric='logloss',
@@ -192,7 +192,7 @@ print("objective_ =" + str(model.objective_))
 
 import graphviz
 from IPython.display import HTML
-viz = lgb.create_tree_digraph(model.booster_,directory="c:/speights2",filename="dud.png")
+viz = lgb.create_tree_digraph(model.booster_,directory="c:/dud2",filename="dud.png")
 
 viz.render(filename = "c:/speights2/test1.png",format='png')
 
@@ -202,5 +202,5 @@ HTML(viz._repr_image_svg_xml())
 
 
 
-s = graphviz.Source(viz, filename = "c:/speights2/test1.gv", format = "png")
+s = graphviz.Source(viz, filename = "c:/xxxx/test1.gv", format = "png")
 s.view()
